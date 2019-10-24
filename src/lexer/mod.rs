@@ -41,7 +41,7 @@ impl CodeLocation for LiteralNode {
 
 impl TreeDump for LiteralNode {
     fn print_with_indent(&self, indent: usize, indent_style: &str) {
-        println!("{}({}): Literal TODO: Add literal name here", indent_style.repeat(indent), self.start);
+        println!("{}({}): literal {}", indent_style.repeat(indent), self.start, self.literal);
     }   
 }
 
@@ -132,7 +132,10 @@ fn parse_value(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
 pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
     use tokenizer::KeywordType;
 
-    let start = tokens.get_index();
+    let start = match tokens.peek() {
+        Some(t) => t.start,
+        None => 99999999
+    };
 
     if !tokens.match_func_offset(0, | t | t.is_keyword(KeywordType::BlockOpen)) {
         return Err(Box::new(BlockError {

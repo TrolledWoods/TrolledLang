@@ -114,14 +114,7 @@ impl TreeDump for Token {
             Keyword(keyword) => println!("keyword '{}'", keyword),
             Operator(operator) => println!("operator '{}'", operator),
             Identifier(string) => println!("identifier '{}'", string),
-            Literal(literal) => {
-                use LiteralType::*;
-                match literal {
-                    _String(string) => println!("literal string '{}'", string),
-                    Integer(value) => println!("literal integer '{}'", value),
-                    Float(value) => println!("literal float '{}'", value)
-                }
-            }
+            Literal(literal) => println!("literal {}", literal)
         }
     }
 }
@@ -130,6 +123,17 @@ pub enum LiteralType {
     _String(String),
     Integer(i128),
     Float (f64)
+}
+
+impl std::fmt::Display for LiteralType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use LiteralType::*;
+        match self {
+            _String(string) => write!(f, "string \"{}\"", string),
+            Integer(value) => write!(f, "integer '{}'", value),
+            Float(value) => write!(f, "float '{}'", value)
+        }
+    }
 }
 
 impl Clone for LiteralType {
