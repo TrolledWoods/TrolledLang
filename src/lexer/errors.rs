@@ -1,11 +1,7 @@
 use super::{ CodeLocation, SyntaxTreeNode };
+use super::super::TreeDump;
 
-pub trait ParserError: CodeLocation {
-    fn print(&self) {
-        self.print_indent(&String::from(" | "), 0);
-    }
-    fn print_indent(&self, indent: &String, n_indent: usize);
-    
+pub trait ParserError: CodeLocation + TreeDump {
     fn get_causes(&self) -> &[Box<ParserError>] {
         &[]
     }
@@ -37,11 +33,13 @@ impl CodeLocation for LiteralError {
     }
 }
 
-impl ParserError for LiteralError {
-    fn print_indent(&self, indent: &String, n_indent: usize) {
-        println!("{}({}): Invalid literal", indent.repeat(n_indent), self.start);
+impl TreeDump for LiteralError {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
+        println!("{}({}): Invalid literal", indent_style.repeat(indent), self.start);
     }
+}
 
+impl ParserError for LiteralError {
     fn get_causes(&self) -> &[Box<ParserError>] {
         &[]
     }
@@ -66,15 +64,17 @@ impl CodeLocation for SimpleError {
     }
 }
 
-impl ParserError for SimpleError {
-    fn print_indent(&self, indent: &String, n_indent: usize) {
+impl TreeDump for SimpleError {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
         use SimpleError::*;
-        println!("{}({}): {}", indent.repeat(n_indent), self.get_start(), match self {
+        println!("{}({}): {}", indent_style.repeat(indent), self.get_start(), match self {
             ExpectedBlockOpen(_) => "Expected '('",
             ExpectedBlockClose(_) => "Expected ')'"
         });
     }
+}
 
+impl ParserError for SimpleError {
     fn get_strength(&self) -> u8 {
         use SimpleError::*;
         match self {
@@ -97,14 +97,16 @@ impl CodeLocation for BlockError {
     }
 }
 
-impl ParserError for BlockError {
-    fn print_indent(&self, indent: &String, n_indent: usize) {
-        println!("{}({}): Invalid code block", indent.repeat(n_indent), self.start);
+impl TreeDump for BlockError {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
+        println!("{}({}): Invalid code block", indent_style.repeat(indent), self.start);
         for cause in self.causes.iter() {
-            cause.print_indent(indent, n_indent + 1);
+            cause.print_with_indent(indent + 1, indent_style);
         }
     }
+}
 
+impl ParserError for BlockError {
     fn get_causes(&self) -> &[Box<ParserError>] {
         self.causes.as_slice()
     }

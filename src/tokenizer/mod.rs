@@ -1,5 +1,6 @@
 use super::Needle;
 use std::vec::Vec;
+use super::TreeDump;
 
 pub struct Error {
     pub msg: &'static str,
@@ -25,18 +26,115 @@ impl Error {
     }
 }
 
-type Loc = usize;
+#[derive(Clone)]
+pub enum TokenType {
+    Literal(LiteralType),
+    Operator(OperatorType),
+    Keyword(KeywordType),
+    Identifier(String)
+}
+
+// impl Clone for TokenType {
+//     fn clone(&self) -> TokenType {
+//         use TokenType::*;
+//         match self {
+//             Literal(literal) => Literal(literal.clone()),
+//             Operator(operator) => Operator(operator.clone()),
+//             Keyword(keyword) => Keyword(keyword.clone()),
+//             Identifier(string) => Identifier(string.clone())
+//         }
+//     }
+// }
 
 #[derive(Clone)]
-pub enum Literal {
+pub struct Token {
+    pub start: usize,
+    pub token_type: TokenType // Can't use 'type' as var. name cuz that's a keyword :(
+}
+
+impl Token {
+    pub fn literal(start: usize, literal: LiteralType) -> Token {
+        Token {
+            start: start,
+            token_type: TokenType::Literal(literal)
+        }
+    }
+
+    pub fn operator(start: usize, operator: OperatorType) -> Token {
+        Token {
+            start: start,
+            token_type: TokenType::Operator(operator)
+        }
+    }
+
+    pub fn keyword(start: usize, keyword: KeywordType) -> Token {
+        Token {
+            start: start,
+            token_type: TokenType::Keyword(keyword)
+        }
+    }
+    
+    pub fn identifier(start: usize, identifier: String) -> Token {
+        Token {
+            start: start,
+            token_type: TokenType::Identifier(identifier)
+        }
+    }
+
+    pub fn as_literal(&self) -> Option<LiteralType> {
+        if let TokenType::Literal(literal) = &self.token_type {
+            Some(literal.clone())
+        }else {
+            None
+        }
+    }
+    
+    pub fn as_keyword(&self) -> Option<KeywordType> {
+        if let TokenType::Keyword(keyword) = self.token_type {
+            Some(keyword.clone())
+        }else {
+            None
+        }
+    }
+
+    pub fn is_keyword(&self, comparer: KeywordType) -> bool {
+        if let TokenType::Keyword(keyword) = self.token_type {
+            keyword == comparer
+        }else {
+            false
+        }
+    }
+}
+
+impl TreeDump for Token {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
+        print!("{}({}): ", indent_style.repeat(indent), self.start);
+        use TokenType::*;
+        match &self.token_type {
+            Keyword(keyword) => println!("keyword '{}'", keyword),
+            Operator(operator) => println!("operator '{}'", operator),
+            Identifier(string) => println!("identifier '{}'", string),
+            Literal(literal) => {
+                use LiteralType::*;
+                match literal {
+                    _String(string) => println!("literal string '{}'", string),
+                    Integer(value) => println!("literal integer '{}'", value),
+                    Float(value) => println!("literal float '{}'", value)
+                }
+            }
+        }
+    }
+}
+
+pub enum LiteralType {
     _String(String),
     Integer(i128),
     Float (f64)
 }
 
-impl Literal {
-    pub fn clone(&self) -> Literal {
-        use Literal::*;
+impl Clone for LiteralType {
+    fn clone(&self) -> LiteralType {
+        use LiteralType::*;
         match self {
             _String(text) => {
                 _String(text.clone())
@@ -52,63 +150,79 @@ impl Literal {
 }
 
 #[derive(Copy, Clone)]
-pub enum Operator {
+pub enum OperatorType {
     Add, Subtract, Multiply, Divide, Modulus, Equals
 }
 
-pub const OPERATOR_TOKENS: [(&str, Operator); 6] = [
-    ("==", Operator::Equals),
-    ("+",  Operator::Add),
-    ("-",  Operator::Subtract),
-    ("*",  Operator::Multiply),
-    ("/",  Operator::Divide),
-    ("%",  Operator::Modulus),
+impl std::fmt::Display for OperatorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OperatorType::*;
+        write!(f, "{}", match self {
+            Add => "add",
+            Subtract => "sub",
+            Multiply => "mult",
+            Divide => "div",
+            Modulus => "modulus",
+            Equals => "equals"
+        })
+    }
+}
+
+pub const OPERATOR_TOKENS: [(&str, OperatorType); 6] = [
+    ("==", OperatorType::Equals),
+    ("+",  OperatorType::Add),
+    ("-",  OperatorType::Subtract),
+    ("*",  OperatorType::Multiply),
+    ("/",  OperatorType::Divide),
+    ("%",  OperatorType::Modulus),
 ];
 
 #[derive(Copy, Clone, PartialEq)]
-pub enum Keyword {
+pub enum KeywordType {    
     If, While, Loop, As, Run, Assign,
     BlockOpen, BlockClose, BlockSeparator, 
     ArrayOpen, ArrayClose, ArraySeparator
 }
 
-/// [substr that produces keyword, The keyword enum member, 
-/// isAlphabetic(can't be surrounded by other alphabetic things)]
-pub const KEYWORD_TOKENS: [(&str, Keyword, bool); 13] = [
-    ("if", Keyword::If, true),
-    ("while", Keyword::While, true),
-    ("loop", Keyword::Loop, true),
-    ("as", Keyword::As, true),
-    ("run", Keyword::Run, true),
-    ("=", Keyword::Assign, false),
-    ("#(", Keyword::BlockOpen, false),
-
-    (";", Keyword::BlockSeparator, false),
-    ("(", Keyword::BlockOpen, false),
-    (")", Keyword::BlockClose, false),
-
-    (",", Keyword::ArraySeparator, false),
-    ("[", Keyword::ArrayOpen, false),
-    ("]", Keyword::ArrayClose, false)
-];
-
-pub enum Token {
-    Word(Loc, String),
-    _Literal(Loc, Literal),
-
-    Op(Loc, Operator),
-    _Keyword(Loc, Keyword)
-}
-
-impl Token {
-    pub fn is_keyword(&self, compare: Keyword) -> bool {
-        if let Token::_Keyword(_, keyword) = self {
-            return compare == *keyword;
-        }
-
-        false
+impl std::fmt::Display for KeywordType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use KeywordType::*;
+        write!(f, "{}", match self {
+            If => "if",
+            While => "while",
+            Loop => "loop",
+            As => "as",
+            Run => "run",
+            Assign => "assign",
+            BlockOpen => "block open",
+            BlockClose => "block close",
+            BlockSeparator => "block separator",
+            ArrayOpen => "array open",
+            ArrayClose => "array close",
+            ArraySeparator => "array separator"
+        })
     }
 }
+
+/// [substr that produces keyword, The keyword enum member, 
+/// isAlphabetic(can't be surrounded by other alphabetic things)]
+pub const KEYWORD_TOKENS: [(&str, KeywordType, bool); 13] = [
+    ("if",      KeywordType::If,                true ),
+    ("while",   KeywordType::While,             true ),
+    ("loop",    KeywordType::Loop,  	        true ),
+    ("as",      KeywordType::As,                true ),
+    ("run",     KeywordType::Run,               true ),
+    ("=",       KeywordType::Assign,            false),
+    ("#(",      KeywordType::BlockOpen,         false),
+
+    (";",       KeywordType::BlockSeparator,    false),
+    ("(",       KeywordType::BlockOpen,         false),
+    (")",       KeywordType::BlockClose,        false),
+
+    (",",       KeywordType::ArraySeparator,    false),
+    ("[",       KeywordType::ArrayOpen,         false),
+    ("]",       KeywordType::ArrayClose,        false)
+];
 
 /// *IMPORTANT: The needle will change, so buffering the change 
 /// with push_state and pop_state around this function is vital*
@@ -124,7 +238,10 @@ pub fn try_tokenize_word<'a>(needle: &mut Needle<char>) -> Result<Token, Error> 
     }
 
     if start != needle.get_index() {
-        return Ok(Token::Word(needle.get_prev_state_index(), needle.get_slice(start, needle.get_index())));
+        return Ok(Token::identifier(
+            needle.get_prev_state_index(), 
+            needle.get_slice(start, needle.get_index())
+            ));
     }
     
     Err(Error::at_needle(needle, 0, "No word found"))
@@ -169,11 +286,11 @@ pub fn try_tokenize_string(needle: &mut Needle<char>) -> Result<Token, Error> {
         c = *needle.read().ok_or(Error::new(needle_pos, 2, "Unexpected end of string"))?;
     }
 
-    Ok(Token::_Literal(
+    Ok(Token::literal(
             needle.get_prev_state_index(), 
-            Literal::_String(string)
-            )
+            LiteralType::_String(string)
         )
+    )
 }
 
 pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
@@ -196,12 +313,10 @@ pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
         if start == needle.get_index() {
             return Err(Error::at_needle(needle, 0, "Expected a digit or a dot to start of a number"));
         }else {
-            return Ok(
-                Token::_Literal(
+            return Ok(Token::literal(
                     needle.get_prev_state_index(), 
-                    Literal::Integer(value)
-                    )
-                );
+                    LiteralType::Integer(value)
+                ));
         }
     }
     needle.next();
@@ -228,9 +343,11 @@ pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
     }
 
     Ok(
-        Token::_Literal(needle.get_prev_state_index(), 
-        Literal::Float(value))
+        Token::literal(
+            needle.get_prev_state_index(), 
+            LiteralType::Float(value)
         )
+    )
 }
 
 fn if_change_err<T>(result: Result<T, Error>, error: &mut Option<Error>) -> Option<T> {
@@ -277,7 +394,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         {
             for op in &OPERATOR_TOKENS {
                 if needle.matches_slice(op.0) {
-                    tokens.push(Token::Op(needle.get_index(), op.1));
+                    tokens.push(Token::operator(needle.get_index(), op.1));
                     needle.skip(op.0.len());
                     continue 'outer;
                 }
@@ -294,7 +411,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
                             continue;
                         }
                     }
-                    tokens.push(Token::_Keyword(needle.get_index(), keyword.1));
+                    tokens.push(Token::keyword(needle.get_index(), keyword.1));
                     needle.skip(keyword.0.len());
                     continue 'outer;
                 }
@@ -344,52 +461,4 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
     }
 
     (tokens, errors)
-}
-
-pub fn dump_token(token: &Token) {
-    use Token::*;
-    match token {
-        Word(loc, word) => {
-            println!("({}): Word '{}'", loc, word);
-        },
-        _Literal(loc, data) => {
-            use Literal::*;
-            println!("({}): Literal {}", loc, match data {
-                _String(string) => format!("string \"{}\"", string),
-                Integer(integer) => format!("integer '{}'", integer),
-                Float(float) => format!("float '{}'", float)
-            });
-        },
-        Op(loc, op) => {
-            use Operator::*;
-            println!("({}): Operator '{}'", loc, match op {
-                Add => "add",
-                Subtract => "subtract",
-                Multiply => "multiply",
-                Divide => "divide",
-                Modulus => "modulus",
-                Equals => "equals"
-            });
-        },
-        _Keyword(loc, keyword) => {
-            use Keyword::*;
-            println!("({}): Keyword '{}'", loc, match keyword {
-                If => "if",
-                As => "as",
-                Assign => "assign",
-
-                While => "while",
-                Loop => "loop",
-                Run => "run",
-                
-                BlockOpen => "block open",
-                BlockClose => "block close",
-                BlockSeparator => "block separator",
-
-                ArrayOpen => "array open",
-                ArrayClose => "array close",
-                ArraySeparator => "array separator"
-            });
-        }
-    }
 }

@@ -1,7 +1,9 @@
 mod tokenizer;
 mod lexer;
+mod tree_dump;
 mod needle;
 use needle::{ Needle };
+pub use tree_dump::TreeDump;
 
 fn run(code: &String) -> bool {
     let (result, errors) = tokenizer::tokenize(&code[..]);
@@ -15,12 +17,12 @@ fn run(code: &String) -> bool {
     }
 
     for token in result.iter() {
-        tokenizer::dump_token(token);
+        token.print();
     }
     
     let tree = lexer::parse_block(&mut Needle::new(result, 0));
     if let Ok(value) = tree {
-        value.print(&String::from(" : "), 0);
+        value.print();
     }else if let Err(error) = tree {
         error.print();
     }
