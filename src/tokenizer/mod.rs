@@ -1,13 +1,54 @@
-mod string_needle;
-use string_needle::{ StringNeedle, TokenError };
+use super::Needle;
 use std::vec::Vec;
+
+pub struct Error {
+    pub msg: &'static str,
+    pub loc: usize,
+    pub priority: u8
+}
+
+impl Error {
+    pub fn new(loc: usize, priority: u8, msg: &'static str) -> Error {
+        Error {
+            loc: loc,
+            msg: msg,
+            priority: priority
+        }
+    }
+
+    pub fn at_needle<T>(needle: &Needle<T>, priority: u8, msg: &'static str) -> Error {
+        Error {
+            loc: needle.get_index(),
+            msg: msg,
+            priority: priority
+        }
+    }
+}
 
 type Loc = usize;
 
+#[derive(Clone)]
 pub enum Literal {
     _String(String),
     Integer(i128),
     Float (f64)
+}
+
+impl Literal {
+    pub fn clone(&self) -> Literal {
+        use Literal::*;
+        match self {
+            _String(text) => {
+                _String(text.clone())
+            },
+            Integer(integer) => {
+                Integer(*integer)
+            },
+            Float(float) => {
+                Float(*float)
+            }
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -24,7 +65,7 @@ pub const OPERATOR_TOKENS: [(&str, Operator); 6] = [
     ("%",  Operator::Modulus),
 ];
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum Keyword {
     If, While, Loop, As, Run, Assign,
     BlockOpen, BlockClose, BlockSeparator, 
@@ -59,12 +100,22 @@ pub enum Token {
     _Keyword(Loc, Keyword)
 }
 
+impl Token {
+    pub fn is_keyword(&self, compare: Keyword) -> bool {
+        if let Token::_Keyword(_, keyword) = self {
+            return compare == *keyword;
+        }
+
+        false
+    }
+}
+
 /// *IMPORTANT: The needle will change, so buffering the change 
 /// with push_state and pop_state around this function is vital*
-pub fn try_tokenize_word<'a>(needle: &mut StringNeedle) -> Result<Token, TokenError> {
+pub fn try_tokenize_word<'a>(needle: &mut Needle<char>) -> Result<Token, Error> {
     let start = needle.get_index();
     
-    while let Some(c) = needle.peek() {
+    while let Some(&c) = needle.peek() {
         if !(c.is_alphabetic() || c == '_') {
             break;
         }else{
@@ -76,27 +127,29 @@ pub fn try_tokenize_word<'a>(needle: &mut StringNeedle) -> Result<Token, TokenEr
         return Ok(Token::Word(needle.get_prev_state_index(), needle.get_slice(start, needle.get_index())));
     }
     
-    Err(TokenError::at_needle(needle, 0, "No word found"))
+    Err(Error::at_needle(needle, 0, "No word found"))
 }
 
 /// *IMPORTANT: The needle will change, so buffering the change 
 /// with push_state and pop_state around this function is vital 
 /// to undo changes if it returned None*
-pub fn try_tokenize_string(needle: &mut StringNeedle) -> Result<Token, TokenError> {
+pub fn try_tokenize_string(needle: &mut Needle<char>) -> Result<Token, Error> {
     match needle.read() {
-        Ok('"') => {},
+        Some('"') => {},
         _ => {
-            return Err(TokenError::at_needle(needle, 0, "Unexpected start of string, expected '\"'"));
+            return Err(Error::at_needle(needle, 0, "Unexpected start of string, expected '\"'"));
         }
     }
 
     let mut string = String::new();
 
     // We turn the needle.read() error into a high priority error
-    let mut c = TokenError::if_err_mod(needle.read(), 2, "Unexpected end of string")?;
+    let mut needle_pos = needle.get_index();
+    let mut c = *(needle.read().ok_or(Error::new(needle_pos, 2, "Unexpected end of string"))?);
     while c != '"' {
         if c == '\\' {
-            c = TokenError::if_err_mod(needle.read(), 2, "Unexpected end of string")?;
+            needle_pos = needle.get_index();
+            c = *needle.read().ok_or(Error::new(needle_pos, 2, "Unexpected end of string"))?;
 
             match c {
                 '"' => string.push('"'),
@@ -104,15 +157,16 @@ pub fn try_tokenize_string(needle: &mut StringNeedle) -> Result<Token, TokenErro
                 't' => string.push('\t'),
                 'n' => string.push('\n'),
                 '0' => panic!("TODO: Add hex based character definitions in strings \\0xFA"),
-                _ => return Err(TokenError::at_needle(needle, 1, "Invalid character after '\\'"))
+                _ => return Err(Error::new(needle_pos + 1, 1, "Invalid character after '\\'"))
             }
         }else if c == '\n' {
-            return Err(TokenError::at_needle(needle, 2, "Unexpected end of string"));    
+            return Err(Error::at_needle(needle, 2, "Unexpected end of string"));    
         }else{
             string.push(c);
         }
 
-        c = TokenError::if_err_mod(needle.read(), 2, "Unexpected end of string")?;
+        needle_pos = needle.get_index();
+        c = *needle.read().ok_or(Error::new(needle_pos, 2, "Unexpected end of string"))?;
     }
 
     Ok(Token::_Literal(
@@ -122,7 +176,7 @@ pub fn try_tokenize_string(needle: &mut StringNeedle) -> Result<Token, TokenErro
         )
 }
 
-pub fn try_tokenize_number(needle: &mut StringNeedle) -> Result<Token, TokenError> {
+pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
     let start = needle.get_index();
     let mut value = 0i128;
 
@@ -140,7 +194,7 @@ pub fn try_tokenize_number(needle: &mut StringNeedle) -> Result<Token, TokenErro
     if !needle.matches_slice(".") {
         // Or well, it didn't move apparently, so it's nothing
         if start == needle.get_index() {
-            return Err(TokenError::at_needle(needle, 0, "Expected a digit or a dot to start of a number"));
+            return Err(Error::at_needle(needle, 0, "Expected a digit or a dot to start of a number"));
         }else {
             return Ok(
                 Token::_Literal(
@@ -169,7 +223,7 @@ pub fn try_tokenize_number(needle: &mut StringNeedle) -> Result<Token, TokenErro
     }
 
     if start == needle.get_index() {
-        return Err(TokenError::at_needle(needle, 1, 
+        return Err(Error::at_needle(needle, 1, 
             "Expected something after '.' to make a float or get a member of a structure"));
     }
 
@@ -179,7 +233,7 @@ pub fn try_tokenize_number(needle: &mut StringNeedle) -> Result<Token, TokenErro
         )
 }
 
-fn if_change_err<T>(result: Result<T, TokenError>, error: &mut Option<TokenError>) -> Option<T> {
+fn if_change_err<T>(result: Result<T, Error>, error: &mut Option<Error>) -> Option<T> {
     match result {
         Ok(ok_result) => {
             Some(ok_result)
@@ -198,8 +252,8 @@ fn if_change_err<T>(result: Result<T, TokenError>, error: &mut Option<TokenError
     }
 }
 
-pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<TokenError>) {
-    let mut needle = StringNeedle::new(chars, 0usize);
+pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
+    let mut needle = Needle::from_str(chars, 0usize);
     let mut tokens = Vec::new();
     let mut errors = Vec::new();
     'outer: loop {
@@ -232,10 +286,10 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<TokenError>) {
             for keyword in &KEYWORD_TOKENS {
                 if needle.matches_slice(keyword.0) {
                     if keyword.2 {
-                        if needle.match_func_offset(-1, char::is_alphabetic, false)
+                        if needle.match_func_offset(-1, |c| c.is_alphabetic())
                             || needle.match_func_offset(
                                     keyword.0.len() as isize, 
-                                    char::is_alphabetic, false
+                                    |c| c.is_alphabetic()
                                 ) {
                             continue;
                         }
@@ -277,12 +331,12 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<TokenError>) {
                 errors.push(error);
             }else {
                 errors.push(
-                    TokenError::at_needle(&needle, 1, "Unexpected token")
+                    Error::at_needle(&needle, 1, "Unexpected token")
                     );
             }
         }else {
             errors.push(
-                TokenError::at_needle(&needle, 1, "Unexpected token")
+                Error::at_needle(&needle, 1, "Unexpected token")
                 );
         }
 
