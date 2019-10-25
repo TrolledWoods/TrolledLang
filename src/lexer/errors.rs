@@ -1,5 +1,6 @@
 use super::{ CodeLocation, SyntaxTreeNode };
 use super::super::TreeDump;
+use super::super::needle::Loc;
 
 pub trait ParserError: CodeLocation + TreeDump {
     fn get_causes(&self) -> &[Box<ParserError>] {
@@ -10,17 +11,17 @@ pub trait ParserError: CodeLocation + TreeDump {
     fn cmp_strength(&self, other: &Option<Box<ParserError>>) -> bool {
         match other {
             None => true,
-            Some(value) => value.get_strength() < self.get_strength()
+            Some(value) => value.get_strength() <= self.get_strength()
         }
     }
 }
 
 pub struct LiteralError {
-    pub start: usize
+    pub start: Loc
 }
 
 impl LiteralError {
-    pub fn new(start: usize) -> LiteralError {
+    pub fn new(start: Loc) -> LiteralError {
         LiteralError {
             start: start
         }
@@ -28,7 +29,7 @@ impl LiteralError {
 }
 
 impl CodeLocation for LiteralError {
-    fn get_start(&self) -> usize {
+    fn get_start(&self) -> Loc {
         self.start
     }
 }
@@ -45,17 +46,17 @@ impl ParserError for LiteralError {
     }
 
     fn get_strength(&self) -> u8 {
-        8 // Not sure if this will be kept, a bit too high in my opinion
+        1
     }
 }
 
 pub enum SimpleError {
-    ExpectedBlockOpen(usize),
-    ExpectedBlockClose(usize)
+    ExpectedBlockOpen(Loc),
+    ExpectedBlockClose(Loc)
 }
 
 impl CodeLocation for SimpleError {
-    fn get_start(&self) -> usize {
+    fn get_start(&self) -> Loc {
         use SimpleError::*;
         match self {
             ExpectedBlockOpen(loc) => *loc,
@@ -85,14 +86,14 @@ impl ParserError for SimpleError {
 }
 
 pub struct BlockError {
-    pub start: usize,
+    pub start: Loc,
     pub strength: u8,
     pub causes: Vec<Box<ParserError>>,
     pub recover: Option<Box<SyntaxTreeNode>>
 }
 
 impl CodeLocation for BlockError {
-    fn get_start(&self) -> usize {
+    fn get_start(&self) -> Loc {
         self.start
     }
 }

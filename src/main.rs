@@ -6,7 +6,7 @@ use needle::{ Needle };
 pub use tree_dump::TreeDump;
 
 fn run(code: &String) -> bool {
-    let (result, errors) = tokenizer::tokenize(&code[..]);
+    let (result, errors, meta) = tokenizer::tokenize(&code[..]);
 
     if errors.len() > 0 {
         println!("There were errors, woohoo!");
@@ -16,14 +16,15 @@ fn run(code: &String) -> bool {
         println!("\n");
     }
 
-    for token in result.iter() {
-        token.print();
-    }
+    // for token in result.iter() {
+    //     token.print();
+    // }
     
-    let tree = lexer::parse_block(&mut Needle::new(result, 0));
+    let tree = lexer::parse_value(&mut Needle::new(result, 0), &meta);
     if let Ok(value) = tree {
         value.print();
     }else if let Err(error) = tree {
+        println!("Got an error!");
         error.print();
     }
 

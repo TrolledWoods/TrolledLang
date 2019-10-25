@@ -1,6 +1,7 @@
 use super::Needle;
 use std::vec::Vec;
 use super::TreeDump;
+use super::needle::{ Loc, TextMetaData };
 
 pub struct Error {
     pub msg: &'static str,
@@ -48,33 +49,33 @@ pub enum TokenType {
 
 #[derive(Clone)]
 pub struct Token {
-    pub start: usize,
+    pub start: Loc,
     pub token_type: TokenType // Can't use 'type' as var. name cuz that's a keyword :(
 }
 
 impl Token {
-    pub fn literal(start: usize, literal: LiteralType) -> Token {
+    pub fn literal(start: Loc, literal: LiteralType) -> Token {
         Token {
             start: start,
             token_type: TokenType::Literal(literal)
         }
     }
 
-    pub fn operator(start: usize, operator: OperatorType) -> Token {
+    pub fn operator(start: Loc, operator: OperatorType) -> Token {
         Token {
             start: start,
             token_type: TokenType::Operator(operator)
         }
     }
 
-    pub fn keyword(start: usize, keyword: KeywordType) -> Token {
+    pub fn keyword(start: Loc, keyword: KeywordType) -> Token {
         Token {
             start: start,
             token_type: TokenType::Keyword(keyword)
         }
     }
     
-    pub fn identifier(start: usize, identifier: String) -> Token {
+    pub fn identifier(start: Loc, identifier: String) -> Token {
         Token {
             start: start,
             token_type: TokenType::Identifier(identifier)
@@ -84,14 +85,6 @@ impl Token {
     pub fn as_literal(&self) -> Option<LiteralType> {
         if let TokenType::Literal(literal) = &self.token_type {
             Some(literal.clone())
-        }else {
-            None
-        }
-    }
-    
-    pub fn as_keyword(&self) -> Option<KeywordType> {
-        if let TokenType::Keyword(keyword) = self.token_type {
-            Some(keyword.clone())
         }else {
             None
         }
@@ -230,7 +223,7 @@ pub const KEYWORD_TOKENS: [(&str, KeywordType, bool); 13] = [
 
 /// *IMPORTANT: The needle will change, so buffering the change 
 /// with push_state and pop_state around this function is vital*
-pub fn try_tokenize_word<'a>(needle: &mut Needle<char>) -> Result<Token, Error> {
+pub fn try_tokenize_word<'a>(needle: &mut Needle<char>, meta: &TextMetaData) -> Result<Token, Error> {
     let start = needle.get_index();
     
     while let Some(&c) = needle.peek() {
@@ -243,7 +236,7 @@ pub fn try_tokenize_word<'a>(needle: &mut Needle<char>) -> Result<Token, Error> 
 
     if start != needle.get_index() {
         return Ok(Token::identifier(
-            needle.get_prev_state_index(), 
+            meta.index_to_loc(needle.get_prev_state_index()), 
             needle.get_slice(start, needle.get_index())
             ));
     }
@@ -254,7 +247,7 @@ pub fn try_tokenize_word<'a>(needle: &mut Needle<char>) -> Result<Token, Error> 
 /// *IMPORTANT: The needle will change, so buffering the change 
 /// with push_state and pop_state around this function is vital 
 /// to undo changes if it returned None*
-pub fn try_tokenize_string(needle: &mut Needle<char>) -> Result<Token, Error> {
+pub fn try_tokenize_string(needle: &mut Needle<char>, meta: &TextMetaData) -> Result<Token, Error> {
     match needle.read() {
         Some('"') => {},
         _ => {
@@ -291,13 +284,13 @@ pub fn try_tokenize_string(needle: &mut Needle<char>) -> Result<Token, Error> {
     }
 
     Ok(Token::literal(
-            needle.get_prev_state_index(), 
+            meta.index_to_loc(needle.get_prev_state_index()), 
             LiteralType::_String(string)
         )
     )
 }
 
-pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
+pub fn try_tokenize_number(needle: &mut Needle<char>, meta: &TextMetaData) -> Result<Token, Error> {
     let start = needle.get_index();
     let mut value = 0i128;
 
@@ -318,7 +311,7 @@ pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
             return Err(Error::at_needle(needle, 0, "Expected a digit or a dot to start of a number"));
         }else {
             return Ok(Token::literal(
-                    needle.get_prev_state_index(), 
+                    meta.index_to_loc(needle.get_prev_state_index()), 
                     LiteralType::Integer(value)
                 ));
         }
@@ -348,7 +341,7 @@ pub fn try_tokenize_number(needle: &mut Needle<char>) -> Result<Token, Error> {
 
     Ok(
         Token::literal(
-            needle.get_prev_state_index(), 
+            meta.index_to_loc(needle.get_prev_state_index()), 
             LiteralType::Float(value)
         )
     )
@@ -373,8 +366,9 @@ fn if_change_err<T>(result: Result<T, Error>, error: &mut Option<Error>) -> Opti
     }
 }
 
-pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
+pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>, TextMetaData) {
     let mut needle = Needle::from_str(chars, 0usize);
+    let meta = needle.get_meta_data();
     let mut tokens = Vec::new();
     let mut errors = Vec::new();
     'outer: loop {
@@ -398,7 +392,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         {
             for op in &OPERATOR_TOKENS {
                 if needle.matches_slice(op.0) {
-                    tokens.push(Token::operator(needle.get_index(), op.1));
+                    tokens.push(Token::operator(meta.index_to_loc(needle.get_index()), op.1));
                     needle.skip(op.0.len());
                     continue 'outer;
                 }
@@ -415,7 +409,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
                             continue;
                         }
                     }
-                    tokens.push(Token::keyword(needle.get_index(), keyword.1));
+                    tokens.push(Token::keyword(meta.index_to_loc(needle.get_index()), keyword.1));
                     needle.skip(keyword.0.len());
                     continue 'outer;
                 }
@@ -423,7 +417,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         }
 
         needle.push_state();
-        if let Some(token) = if_change_err(try_tokenize_string(&mut needle), &mut current_error) {
+        if let Some(token) = if_change_err(try_tokenize_string(&mut needle, &meta), &mut current_error) {
             tokens.push(token);
             needle.pop_state_no_revert();
             continue;
@@ -431,7 +425,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         needle.pop_state();
 
         needle.push_state();
-        if let Some(token) = if_change_err(try_tokenize_word(&mut needle), &mut current_error) {
+        if let Some(token) = if_change_err(try_tokenize_word(&mut needle, &meta), &mut current_error) {
             tokens.push(token);
             needle.pop_state_no_revert();
             continue;
@@ -439,7 +433,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         needle.pop_state();
 
         needle.push_state();
-        if let Some(token) = if_change_err(try_tokenize_number(&mut needle), &mut current_error) {
+        if let Some(token) = if_change_err(try_tokenize_number(&mut needle, &meta), &mut current_error) {
             tokens.push(token);
             needle.pop_state_no_revert();
             continue;
@@ -464,5 +458,5 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>) {
         needle.next();
     }
 
-    (tokens, errors)
+    (tokens, errors, meta)
 }

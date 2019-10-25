@@ -4,12 +4,76 @@ pub struct Needle<T> {
     index_stack: Vec<usize>
 }
 
+#[derive(Clone, Copy)]
+pub struct Loc {
+    pub line: usize, 
+    pub character: usize
+}
+
+impl Loc {
+    pub fn new(line: usize, character: usize) -> Loc {
+        Loc {
+            line: line,
+            character: character
+        }
+    }
+}
+
+impl std::fmt::Display for Loc {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}, {}", self.line + 1, self.character + 1)
+    }
+}
+
+pub struct TextMetaData {
+    pub length: usize,
+
+    /// A sorted array
+    pub newline_locs: Vec<usize>
+}
+
+impl TextMetaData {
+    pub fn index_to_loc(&self, index: usize) -> Loc {
+        let mut line = 0;
+        let mut old_newline_loc = 0;
+        for newline_loc in self.newline_locs.iter() {
+            if *newline_loc <= index {
+                line += 1;
+                old_newline_loc = *newline_loc;
+            }else {
+                break;
+            }
+        }
+
+        Loc::new(line, index - old_newline_loc)
+    } 
+
+    pub fn get_end(&self) -> Loc {
+        let last = self.newline_locs.last().unwrap_or(&0);
+        Loc::new(self.newline_locs.len(), self.length - last)
+    }
+}
+
 impl Needle<char> {
     pub fn from_str(reading: &str, index: usize) -> Needle<char> {
         Needle {
             reading: reading.chars().collect(),
             index: index,
             index_stack: Vec::new()
+        }
+    }
+
+    pub fn get_meta_data<'a>(&self) -> TextMetaData {
+        let mut lines = Vec::new();
+        for (i, c) in self.reading.iter().enumerate() {
+            if *c == '\n' {
+                lines.push(i + 1);
+            }
+        }
+
+        TextMetaData {
+            length: self.reading.len(),
+            newline_locs: lines
         }
     }
 

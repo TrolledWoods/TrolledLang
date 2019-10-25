@@ -1,6 +1,6 @@
 use super::tokenizer::{ Token };
 use super::tokenizer;
-use super::Needle;
+use super::needle::{ Needle, Loc, TextMetaData };
 use super::TreeDump;
 
 mod errors;
@@ -8,18 +8,18 @@ use errors::{ BlockError, LiteralError, ParseResult };
 use errors::SimpleError::*;
 
 pub trait CodeLocation {
-    fn get_start(&self) -> usize;
+    fn get_start(&self) -> Loc;
 }
 
 pub trait SyntaxTreeNode: CodeLocation + TreeDump {
 }
 
 pub struct ErrorNode {
-    start: usize
+    start: Loc
 }
 
 impl CodeLocation for ErrorNode {
-    fn get_start(&self) -> usize { self.start }
+    fn get_start(&self) -> Loc { self.start }
 }
 
 impl TreeDump for ErrorNode {
@@ -31,12 +31,12 @@ impl TreeDump for ErrorNode {
 impl SyntaxTreeNode for ErrorNode {}
 
 pub struct LiteralNode {
-    start: usize,
+    start: Loc,
     literal: tokenizer::LiteralType
 }
 
 impl CodeLocation for LiteralNode {
-    fn get_start(&self) -> usize { self.start }
+    fn get_start(&self) -> Loc { self.start }
 }
 
 impl TreeDump for LiteralNode {
@@ -48,11 +48,11 @@ impl TreeDump for LiteralNode {
 impl SyntaxTreeNode for LiteralNode {}
 
 pub struct NilNode {
-    start: usize
+    start: Loc
 }
 
 impl CodeLocation for NilNode {
-    fn get_start(&self) -> usize { self.start }
+    fn get_start(&self) -> Loc { self.start }
 }
 
 impl TreeDump for NilNode {
@@ -64,13 +64,13 @@ impl TreeDump for NilNode {
 impl SyntaxTreeNode for NilNode {}
 
 pub struct BlockNode {
-    start: usize,
+    start: Loc,
     contents: Vec<Box<SyntaxTreeNode>>,
     _return: Option<Box<SyntaxTreeNode>>
 }
 
 impl CodeLocation for BlockNode {
-    fn get_start(&self) -> usize { self.start }
+    fn get_start(&self) -> Loc { self.start }
 }
 
 impl TreeDump for BlockNode {
@@ -92,23 +92,24 @@ impl TreeDump for BlockNode {
 impl SyntaxTreeNode for BlockNode {}
 
 
-fn parse_literal(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
+fn parse_literal(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResult<Box<SyntaxTreeNode>> {
     if let Some(token) = tokens.read() {
         if let Some(literal) = token.as_literal() {
             Ok(Box::new(LiteralNode { start: token.start, literal: literal }))
         }else {
-            Err(Box::new(LiteralError::new(9999)))
+            Err(Box::new(LiteralError::new(token.start)))
         }
     }else{
-        Err(Box::new(LiteralError::new(9999)))
+        Err(Box::new(LiteralError::new(meta.get_end())))
     }
 }
 
-fn parse_value(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
+pub fn parse_value(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResult<Box<SyntaxTreeNode>> {
     let mut current_error = None;
+    let mut current_error_end = 0;
     
     tokens.push_state();
-    let result = parse_literal(tokens);
+    let result = parse_block(tokens, meta);
     match result {
         Ok(value) => {
             tokens.pop_state_no_revert();
@@ -116,6 +117,23 @@ fn parse_value(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
         },
         Err(error) => {
             if error.cmp_strength(&current_error) {
+                current_error_end = tokens.get_index();
+                current_error = Some(error);
+            }
+        }
+    }
+    tokens.pop_state();
+
+    tokens.push_state();
+    let result = parse_literal(tokens, meta);
+    match result {
+        Ok(value) => {
+            tokens.pop_state_no_revert();
+            return Ok(value);
+        },
+        Err(error) => {
+            if error.cmp_strength(&current_error) {
+                current_error_end = tokens.get_index();
                 current_error = Some(error);
             }
         }
@@ -123,18 +141,20 @@ fn parse_value(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
     tokens.pop_state();
 
     if let Some(error) = current_error {
+        tokens.index = current_error_end;
         return Err(error);
     }else {
         panic!("No error was given, I have no idea why");
     }
 } 
 
-pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode>> {
+pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData) 
+        -> ParseResult<Box<SyntaxTreeNode>> {
     use tokenizer::KeywordType;
 
     let start = match tokens.peek() {
         Some(t) => t.start,
-        None => 99999999
+        None => Loc::new(500, 500)
     };
 
     if !tokens.match_func_offset(0, | t | t.is_keyword(KeywordType::BlockOpen)) {
@@ -150,13 +170,14 @@ pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode
     let next = tokens.peek();
     if next.is_none() { 
         return Err(Box::new(BlockError {
-            start: 9999999,
+            start: meta.get_end(),
             strength: 1, 
             causes: vec![Box::new(ExpectedBlockOpen(start))],
             recover: None
         }));
     }
     if next.unwrap().is_keyword(KeywordType::BlockClose) {
+        tokens.next();
         return Ok(Box::new(NilNode { start: start }));
     }
 
@@ -165,7 +186,7 @@ pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode
     let mut errors = Vec::new();
 
     loop {
-        let current_value = match parse_value(tokens) {
+        let current_value = match parse_value(tokens, meta) {
             Ok(value) => value,
             Err(err) => {
                 let start = err.get_start();
@@ -187,9 +208,10 @@ pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode
                     }
                 }
             }else {
+                errors.push(Box::new(ExpectedBlockClose(current_value.get_start())));
                 return Err(Box::new(BlockError {
                     start: start,
-                    causes: vec![Box::new(ExpectedBlockClose(current_value.get_start()))],
+                    causes: errors,
                     strength: 2,
                     recover: Some(Box::new(BlockNode {
                         start: start,
@@ -199,10 +221,11 @@ pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode
                 }));
             }
         }else{
+            errors.push(Box::new(ExpectedBlockClose(meta.get_end())));
             return Err(Box::new(BlockError {
                     start: start,
                     strength: 2,
-                    causes: vec![Box::new(ExpectedBlockClose(current_value.get_start()))],
+                    causes: errors,
                     recover: Some(Box::new(BlockNode {
                         start: start,
                         contents: contents,
@@ -212,9 +235,26 @@ pub fn parse_block(tokens: &mut Needle<Token>) -> ParseResult<Box<SyntaxTreeNode
         }
     }
 
-    Ok(Box::new(BlockNode {
-        start: start,
-        contents: contents,
-        _return: _return
-    }))
+    if errors.len() > 0 {
+        Err(
+            Box::new(BlockError {
+                start: start,
+                strength: 4,
+                causes: errors,
+                recover: Some(
+                    Box::new(BlockNode {
+                        start: start,
+                        contents: contents,
+                        _return: _return
+                    })
+                )
+            })
+        )
+    }else{
+        Ok(Box::new(BlockNode {
+            start: start,
+            contents: contents,
+            _return: _return
+        }))
+    }
 }
