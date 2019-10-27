@@ -1,10 +1,10 @@
-use super::{ SyntaxTreeNode, TreeDump, CodeLocation, Loc, ScopeHandle };
+use super::{ SyntaxTreeNode, TreeDump, CodeLocation, Loc, ScopeHandle, ScopePool, TypeCollection };
 
 pub struct BlockNode {
-    start: Loc,
-    scope: ScopeHandle,
-    contents: Vec<Box<SyntaxTreeNode>>,
-    _return: Option<Box<SyntaxTreeNode>>
+    pub start: Loc,
+    pub scope: ScopeHandle,
+    pub contents: Vec<Box<SyntaxTreeNode>>,
+    pub _return: Option<Box<SyntaxTreeNode>>
 }
 
 impl CodeLocation for BlockNode {
@@ -27,4 +27,12 @@ impl TreeDump for BlockNode {
     }
 }
 
-impl SyntaxTreeNode for BlockNode {}
+impl SyntaxTreeNode for BlockNode {
+    fn get_possible_returns(&self, scope: ScopeHandle, scopes: &ScopePool) -> TypeCollection {
+        if let Some(node) = &self._return {
+            node.get_possible_returns(self.scope, scopes)
+        }else {
+            TypeCollection::undef()
+        }
+    }
+}

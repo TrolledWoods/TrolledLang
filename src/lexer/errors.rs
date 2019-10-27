@@ -55,7 +55,8 @@ pub enum SimpleError {
     ExpectedBlockClose(Loc),
     ExpectedIdentifier(Loc, u8),
     ExpectedEquals(Loc, u8),
-    InvalidVariableName(Loc, u8)
+    InvalidVariableName(Loc, u8),
+    ExpectedExpression(Loc, u8)
 }
 
 impl CodeLocation for SimpleError {
@@ -66,7 +67,8 @@ impl CodeLocation for SimpleError {
             ExpectedBlockClose(loc) => *loc,
             ExpectedIdentifier(loc, _) => *loc,
             ExpectedEquals(loc, _) => *loc,
-            InvalidVariableName(loc, _) => *loc
+            InvalidVariableName(loc, _) => *loc,
+            ExpectedExpression(loc, _) => *loc,
         }
     }
 }
@@ -80,6 +82,7 @@ impl TreeDump for SimpleError {
             ExpectedIdentifier(_, _) => "Expected identifier",
             ExpectedEquals(_, _) => "Expected equals",
             InvalidVariableName(_, _) => "Invalid variable name",
+            ExpectedExpression(_, _) => "Expected expression",
         });
     }
 }
@@ -93,6 +96,7 @@ impl ParserError for SimpleError {
             ExpectedIdentifier(_, strength) => *strength,
             ExpectedEquals(_, strength) => *strength,
             InvalidVariableName(_, strength) => *strength,
+            ExpectedExpression(_, strength) => *strength,
         }
     }
 }

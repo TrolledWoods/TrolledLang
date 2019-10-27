@@ -6,20 +6,27 @@ use std::collections::HashMap;
 
 mod type_handler;
 mod errors;
-pub use type_handler::{ Type, ScopePool, ScopeHandle };
+pub use type_handler::{ Type, TypeCollection, ScopePool, ScopeHandle };
 pub use errors::{ BlockError, LiteralError, AssignmentDataError };
 use errors::SimpleError::*;
 pub use errors::SimpleError;
 pub use errors::ParseResult;
 
 mod block_node;
+mod literal_node;
+mod assignment_node;
 use block_node::BlockNode;
+use assignment_node::AssignmentNode;
+use literal_node::LiteralNode;
 
 pub trait CodeLocation {
     fn get_start(&self) -> Loc;
 }
 
 pub trait SyntaxTreeNode: CodeLocation + TreeDump {
+    fn get_possible_returns(&self, scope: ScopeHandle, scopes: &ScopePool) -> TypeCollection {
+        TypeCollection::from(Vec::new())
+    }
 }
 
 pub struct ErrorNode {
@@ -38,23 +45,6 @@ impl TreeDump for ErrorNode {
 
 impl SyntaxTreeNode for ErrorNode {}
 
-pub struct LiteralNode {
-    start: Loc,
-    literal: tokenizer::LiteralType
-}
-
-impl CodeLocation for LiteralNode {
-    fn get_start(&self) -> Loc { self.start }
-}
-
-impl TreeDump for LiteralNode {
-    fn print_with_indent(&self, indent: usize, indent_style: &str) {
-        println!("{}({}): literal {}", indent_style.repeat(indent), self.start, self.literal);
-    }   
-}
-
-impl SyntaxTreeNode for LiteralNode {}
-
 pub struct NilNode {
     start: Loc
 }
@@ -70,26 +60,6 @@ impl TreeDump for NilNode {
 }
 
 impl SyntaxTreeNode for NilNode {}
-
-pub struct AssignmentNode {
-    start: Loc,
-    identifier: String,
-    data: Box<SyntaxTreeNode>
-}
-
-impl CodeLocation for AssignmentNode {
-    fn get_start(&self) -> Loc { self.start }
-}
-
-impl TreeDump for AssignmentNode {
-    fn print_with_indent(&self, indent: usize, indent_style: &str) {
-        println!("{}({}): Assignment of '{}' to", 
-            indent_style.repeat(indent), self.start, self.identifier);
-        self.data.print_with_indent(indent + 1, indent_style);
-    }
-}
-
-impl SyntaxTreeNode for AssignmentNode {}
 
 pub struct VariableNode {
     start: Loc,
@@ -115,7 +85,13 @@ impl CodeLocation for VariableNode {
     fn get_start(&self) -> Loc { self.start }
 }
 
-impl SyntaxTreeNode for VariableNode {}
+impl SyntaxTreeNode for VariableNode {
+    fn get_possible_returns(&self, scope: ScopeHandle, scopes: &ScopePool) -> TypeCollection {
+        scope.get(scopes, &self.identifier[..])
+            .expect("A VariableNode's variable name does not fit the scope")
+            .clone()
+    }
+}
 
 fn parse_variable(tokens: &mut Needle<Token>, meta: &TextMetaData, scope: ScopeHandle, scopes: &ScopePool)
         -> ParseResult<Box<SyntaxTreeNode>> {
@@ -162,8 +138,21 @@ fn parse_assignment(tokens: &mut Needle<Token>, meta: &TextMetaData, scope: Scop
     let data = parse_value(tokens, meta, scope, scopes);
     match data {
         Ok(data) => {
+            let possible_returns = data.get_possible_returns(scope, scopes);
+            if possible_returns.is_undef() {
+                return Err(Box::new(AssignmentDataError {
+                    start: start,
+                    strength: 3,
+                    cause: Box::new(SimpleError::ExpectedExpression(data.get_start(), 3)),
+                    var_name: identifier
+                }));
+            }
+
             if scope.get(scopes, &identifier[..]).is_none() {
-                scope.insert(scopes, &identifier[..], Type::Undef);
+                scope.insert(scopes, &identifier[..], possible_returns);
+            }else{
+                let element = scope.get_mut(scopes, &identifier[..]).unwrap();
+                element.constrain(&possible_returns);
             }
             Ok(Box::new(AssignmentNode {
                 start: start,
@@ -389,6 +378,29 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData, parent_scope
             })
         )
     }else{
+        // If you return something, it cannot be of type undef
+        if let Some(r) = &_return {
+            if r.get_possible_returns(scope, scopes).is_undef() {
+                errors.push(Box::new(SimpleError::ExpectedExpression(r.get_start(), 4)));
+                contents.push(_return.unwrap());
+                return Err(
+                    Box::new(BlockError {
+                        start: start,
+                        strength: 4,
+                        causes: errors,
+                        recover: Some(
+                            Box::new(BlockNode {
+                                start: start,
+                                scope: scope,
+                                contents: contents,
+                                _return: None
+                            })
+                        )
+                    })
+                );
+            }
+        }
+
         Ok(Box::new(BlockNode {
             start: start,
             scope: scope,

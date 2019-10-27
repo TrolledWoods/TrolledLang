@@ -1,8 +1,83 @@
 use std::collections::HashMap;
 use super::TreeDump;
 
+#[derive(Clone)]
+pub struct TypeCollection {
+    types: Vec<Type>
+}
+
+impl TypeCollection {
+    pub fn from(types: Vec<Type>) -> TypeCollection {
+        TypeCollection {
+            types: types
+        }
+    }
+
+    pub fn undef() -> TypeCollection {
+        TypeCollection {
+            types: Vec::new()
+        }
+    }
+
+    pub fn is_undef(&self) -> bool {
+        self.types.len() == 0
+    }
+
+    pub fn constrain(&mut self, other: &TypeCollection) {
+        if self.types.len() == 0 {
+            // We have an undefined type, so just grab the types that get constrained
+            for t in other.types.iter() {
+                self.types.push(t.clone());
+            }
+            return;
+        }
+
+        let mut new_types = Vec::with_capacity(self.types.len());
+        for t in other.types.iter() {
+            if self.types.contains(t) {
+                new_types.push(t.clone());
+            }
+        }
+
+        self.types.clear();
+        self.types.append(&mut new_types);
+    }
+    
+    pub fn collapse(&self) -> Option<Type> {
+        if self.types.contains(&Type::Int) {
+            Some(Type::Int)
+        }else if self.types.contains(&Type::Float) {
+            Some(Type::Float)
+        }else if self.types.contains(&Type::Str) {
+            Some(Type::Str)
+        }else{
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for TypeCollection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.types.len() == 0 {
+            write!(f, "undef")
+        }else {
+            for (i, elem) in self.types.iter().enumerate() {
+                if i == 0 {
+                    write!(f, "{}", elem)?;
+                }else if i < self.types.len() - 1 {
+                    write!(f, ", {}", elem)?;
+                }else{
+                    write!(f, " or {}", elem)?;
+                }
+            }
+
+            Ok(())
+        }
+    }
+}
+
+#[derive(Clone, PartialEq)]
 pub enum Type {
-    Undef,
     Int,
     Float,
     Str
@@ -11,7 +86,6 @@ pub enum Type {
 impl std::fmt::Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Undef => write!(f, "undef"),
             Type::Int => write!(f, "int"),
             Type::Float => write!(f, "float"),
             Type::Str => write!(f, "string")
@@ -20,7 +94,7 @@ impl std::fmt::Display for Type {
 }
 
 pub struct Scope {
-    members: HashMap<String, Type>,
+    members: HashMap<String, TypeCollection>,
     parent_scope: Option<u32>,
     id: u32
 }
@@ -49,7 +123,7 @@ impl ScopePool {
         }
     }
 
-    fn get_member_mut(&mut self, scope_id: u32, var_name: &str) -> Option<&mut Type> {
+    fn get_member_mut(&mut self, scope_id: u32, var_name: &str) -> Option<&mut TypeCollection> {
         let scope = self.scopes.get(&scope_id).expect("Expected a valid scope id in get_member_mut");
         
         if scope.members.contains_key(var_name) {
@@ -61,7 +135,7 @@ impl ScopePool {
         }
     }
 
-    fn get_member(&self, scope_id: u32, var_name: &str) -> Option<&Type> {
+    fn get_member(&self, scope_id: u32, var_name: &str) -> Option<&TypeCollection> {
         let scope = self.scopes.get(&scope_id).expect("Expected a valid scope id in get_member");
         
         if scope.members.contains_key(var_name) {
@@ -141,15 +215,15 @@ impl ScopeHandle {
         scope_pool.create_scope_with_parent(self.id)
     }
 
-    pub fn get_mut<'a>(&self, scope_pool: &'a mut ScopePool, var_name: &str) -> Option<&'a mut Type> {
+    pub fn get_mut<'a>(&self, scope_pool: &'a mut ScopePool, var_name: &str) -> Option<&'a mut TypeCollection> {
         scope_pool.get_member_mut(self.id, var_name)
     }
 
-    pub fn get<'a>(&self, scope_pool: &'a ScopePool, var_name: &str) -> Option<&'a Type> {
+    pub fn get<'a>(&self, scope_pool: &'a ScopePool, var_name: &str) -> Option<&'a TypeCollection> {
         scope_pool.get_member(self.id, var_name)
     }
 
-    pub fn insert(&self, scope_pool: &mut ScopePool, var_name: &str, var_type: Type) -> Option<Type> {
+    pub fn insert(&self, scope_pool: &mut ScopePool, var_name: &str, var_type: TypeCollection) -> Option<TypeCollection> {
         let scope = scope_pool.scopes.get_mut(&self.id).expect("ScopeHandle has an invalid ScopeID. Maybe you passed the wrong ScopePool");
         scope.members.insert(String::from(var_name), var_type)
     }
