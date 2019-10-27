@@ -20,7 +20,16 @@ fn run(code: &String) -> bool {
     //     token.print();
     // }
     
-    let tree = lexer::parse_value(&mut Needle::new(result, 0), &meta);
+    let mut scopes = lexer::ScopePool::new();
+    let tree = lexer::parse_value(
+        &mut Needle::new(result, 0), 
+        &meta, 
+        scopes.create_scope(), 
+        &mut scopes
+        );
+    
+    scopes.print();
+
     if let Ok(value) = tree {
         value.print();
     }else if let Err(error) = tree {

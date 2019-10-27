@@ -52,7 +52,10 @@ impl ParserError for LiteralError {
 
 pub enum SimpleError {
     ExpectedBlockOpen(Loc),
-    ExpectedBlockClose(Loc)
+    ExpectedBlockClose(Loc),
+    ExpectedIdentifier(Loc, u8),
+    ExpectedEquals(Loc, u8),
+    InvalidVariableName(Loc, u8)
 }
 
 impl CodeLocation for SimpleError {
@@ -60,7 +63,10 @@ impl CodeLocation for SimpleError {
         use SimpleError::*;
         match self {
             ExpectedBlockOpen(loc) => *loc,
-            ExpectedBlockClose(loc) => *loc
+            ExpectedBlockClose(loc) => *loc,
+            ExpectedIdentifier(loc, _) => *loc,
+            ExpectedEquals(loc, _) => *loc,
+            InvalidVariableName(loc, _) => *loc
         }
     }
 }
@@ -70,7 +76,10 @@ impl TreeDump for SimpleError {
         use SimpleError::*;
         println!("{}({}): {}", indent_style.repeat(indent), self.get_start(), match self {
             ExpectedBlockOpen(_) => "Expected '('",
-            ExpectedBlockClose(_) => "Expected ')'"
+            ExpectedBlockClose(_) => "Expected ')'",
+            ExpectedIdentifier(_, _) => "Expected identifier",
+            ExpectedEquals(_, _) => "Expected equals",
+            InvalidVariableName(_, _) => "Invalid variable name",
         });
     }
 }
@@ -80,8 +89,41 @@ impl ParserError for SimpleError {
         use SimpleError::*;
         match self {
             ExpectedBlockOpen(_) => 0,
-            ExpectedBlockClose(_) => 4
+            ExpectedBlockClose(_) => 4,
+            ExpectedIdentifier(_, strength) => *strength,
+            ExpectedEquals(_, strength) => *strength,
+            InvalidVariableName(_, strength) => *strength,
         }
+    }
+}
+
+pub struct AssignmentDataError {
+    pub start: Loc,
+    pub strength: u8,
+    pub cause: Box<ParserError>,
+    pub var_name: String
+}
+
+impl CodeLocation for AssignmentDataError {
+    fn get_start(&self) -> Loc {
+        self.start
+    }
+}
+
+impl TreeDump for AssignmentDataError {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
+        println!("{}({}): Invalid assignment for '{}'", indent_style.repeat(indent), self.start, self.var_name);
+        self.cause.print_with_indent(indent + 1, indent_style);
+    }
+}
+
+impl ParserError for AssignmentDataError {
+    fn get_causes(&self) -> &[Box<ParserError>] {
+        &[] // Bah
+    }
+
+    fn get_strength(&self) -> u8 {
+        self.strength
     }
 }
 

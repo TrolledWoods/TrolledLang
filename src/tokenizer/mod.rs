@@ -32,7 +32,8 @@ pub enum TokenType {
     Literal(LiteralType),
     Operator(OperatorType),
     Keyword(KeywordType),
-    Identifier(String)
+    Identifier(String),
+    Invalid
 }
 
 // impl Clone for TokenType {
@@ -107,7 +108,8 @@ impl TreeDump for Token {
             Keyword(keyword) => println!("keyword '{}'", keyword),
             Operator(operator) => println!("operator '{}'", operator),
             Identifier(string) => println!("identifier '{}'", string),
-            Literal(literal) => println!("literal {}", literal)
+            Literal(literal) => println!("literal {}", literal),
+            Invalid => println!("invalid")
         }
     }
 }
@@ -226,10 +228,12 @@ pub const KEYWORD_TOKENS: [(&str, KeywordType, bool); 13] = [
 pub fn try_tokenize_word<'a>(needle: &mut Needle<char>, meta: &TextMetaData) -> Result<Token, Error> {
     let start = needle.get_index();
     
+    let mut is_first = true;
     while let Some(&c) = needle.peek() {
-        if !(c.is_alphabetic() || c == '_') {
+        if !(c.is_alphabetic() || c == '_' || (!is_first && c.is_digit(10))) {
             break;
         }else{
+            is_first = false;
             needle.next();
         }
     }
@@ -440,20 +444,7 @@ pub fn tokenize(chars: &str) -> (Vec<Token>, Vec<Error>, TextMetaData) {
         }
         needle.pop_state();
 
-        if let Some(error) = current_error {
-            if error.priority > 0 {
-                needle.index = error.loc;
-                errors.push(error);
-            }else {
-                errors.push(
-                    Error::at_needle(&needle, 1, "Unexpected token")
-                    );
-            }
-        }else {
-            errors.push(
-                Error::at_needle(&needle, 1, "Unexpected token")
-                );
-        }
+        tokens.push(Token { start: meta.index_to_loc(needle.get_index()), token_type: TokenType::Invalid });
 
         needle.next();
     }

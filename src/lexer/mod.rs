@@ -1,11 +1,19 @@
 use super::tokenizer::{ Token };
 use super::tokenizer;
-use super::needle::{ Needle, Loc, TextMetaData };
+pub use super::needle::{ Needle, Loc, TextMetaData };
 use super::TreeDump;
+use std::collections::HashMap;
 
+mod type_handler;
 mod errors;
-use errors::{ BlockError, LiteralError, ParseResult };
+pub use type_handler::{ Type, ScopePool, ScopeHandle };
+pub use errors::{ BlockError, LiteralError, AssignmentDataError };
 use errors::SimpleError::*;
+pub use errors::SimpleError;
+pub use errors::ParseResult;
+
+mod block_node;
+use block_node::BlockNode;
 
 pub trait CodeLocation {
     fn get_start(&self) -> Loc;
@@ -63,34 +71,126 @@ impl TreeDump for NilNode {
 
 impl SyntaxTreeNode for NilNode {}
 
-pub struct BlockNode {
+pub struct AssignmentNode {
     start: Loc,
-    contents: Vec<Box<SyntaxTreeNode>>,
-    _return: Option<Box<SyntaxTreeNode>>
+    identifier: String,
+    data: Box<SyntaxTreeNode>
 }
 
-impl CodeLocation for BlockNode {
+impl CodeLocation for AssignmentNode {
     fn get_start(&self) -> Loc { self.start }
 }
 
-impl TreeDump for BlockNode {
+impl TreeDump for AssignmentNode {
     fn print_with_indent(&self, indent: usize, indent_style: &str) {
-        println!("{}({}): Block", indent_style.repeat(indent), self.start);
-        if self.contents.len() > 0 {
-            println!("{}Contents:", indent_style.repeat(indent + 1));
-            for content in &self.contents {
-                content.print_with_indent(indent + 2, indent_style);
-            }
-        }
-        if let Some(node) = &self._return {
-            println!("{}Returns:", indent_style.repeat(indent + 1));
-            node.print_with_indent(indent + 2, indent_style);
+        println!("{}({}): Assignment of '{}' to", 
+            indent_style.repeat(indent), self.start, self.identifier);
+        self.data.print_with_indent(indent + 1, indent_style);
+    }
+}
+
+impl SyntaxTreeNode for AssignmentNode {}
+
+pub struct VariableNode {
+    start: Loc,
+    identifier: String
+}
+
+impl VariableNode {
+    fn new(start: Loc, identifier: String) -> VariableNode {
+        VariableNode {
+            start: start,
+            identifier: identifier
         }
     }
 }
 
-impl SyntaxTreeNode for BlockNode {}
+impl TreeDump for VariableNode {
+    fn print_with_indent(&self, indent: usize, indent_style: &str) {
+        println!("{}({}): Variable '{}'", indent_style.repeat(indent), self.start, self.identifier);
+    }
+}
 
+impl CodeLocation for VariableNode {
+    fn get_start(&self) -> Loc { self.start }
+}
+
+impl SyntaxTreeNode for VariableNode {}
+
+fn parse_variable(tokens: &mut Needle<Token>, meta: &TextMetaData, scope: ScopeHandle, scopes: &ScopePool)
+        -> ParseResult<Box<SyntaxTreeNode>> {
+    let next = match tokens.read() {
+        Some(token) => token,
+        None => return Err(Box::new(SimpleError::ExpectedIdentifier(meta.get_end(), 0)))
+    };
+
+    if let tokenizer::TokenType::Identifier(string) = &next.token_type {
+        if scope.get(scopes, &string[..]).is_some() {
+            Ok(Box::new(VariableNode::new(next.start, string.clone())))
+        }else{
+            Err(Box::new(SimpleError::InvalidVariableName(next.start, 1)))
+        }
+    }else{
+        Err(Box::new(SimpleError::ExpectedIdentifier(next.start, 0)))
+    }
+}
+
+fn parse_assignment(tokens: &mut Needle<Token>, meta: &TextMetaData, scope: ScopeHandle, scopes: &mut ScopePool) 
+        -> ParseResult<Box<SyntaxTreeNode>> {
+    // Identifier
+    let next = match tokens.read() {
+        Some(token) => token,
+        None => return Err(Box::new(SimpleError::ExpectedIdentifier(meta.get_end(), 0)))
+    };
+
+    let start = next.start;
+    let identifier = match &next.token_type {
+        tokenizer::TokenType::Identifier(name) => name,
+        _ => return Err(Box::new(SimpleError::ExpectedIdentifier(next.start, 0)))
+    }.clone();
+
+    // Equals
+    let next = match tokens.read() {
+        Some(token) => token,
+        None => return Err(Box::new(SimpleError::ExpectedEquals(meta.get_end(), 0)))
+    };
+    if !next.is_keyword(tokenizer::KeywordType::Assign) {
+        return Err(Box::new(SimpleError::ExpectedEquals(next.start, 0)));
+    }
+
+    // Assign to
+    let data = parse_value(tokens, meta, scope, scopes);
+    match data {
+        Ok(data) => {
+            if scope.get(scopes, &identifier[..]).is_none() {
+                scope.insert(scopes, &identifier[..], Type::Undef);
+            }
+            Ok(Box::new(AssignmentNode {
+                start: start,
+                identifier: identifier,
+                data: data
+            }))
+        },
+        Err(error) => Err(Box::new(AssignmentDataError {
+            start: start,
+            strength: 3,
+            cause: error,
+            var_name: identifier
+        }))
+    } 
+
+    
+    
+    // Identifier
+    // let next = tokens.read().map(|token| token.as_identifier(0));
+    // if next.is_none() {
+    //     return Err(Box::new(SimpleError::expected_identifier(meta.get_end(), 0)));
+    // }
+    // let identifier = next.unwrap();
+    
+    // Equals
+    
+}
 
 fn parse_literal(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResult<Box<SyntaxTreeNode>> {
     if let Some(token) = tokens.read() {
@@ -104,12 +204,29 @@ fn parse_literal(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResult
     }
 }
 
-pub fn parse_value(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResult<Box<SyntaxTreeNode>> {
+pub fn parse_value(tokens: &mut Needle<Token>, meta: &TextMetaData, scope: ScopeHandle, scopes: &mut ScopePool) 
+        -> ParseResult<Box<SyntaxTreeNode>> {
     let mut current_error = None;
     let mut current_error_end = 0;
     
     tokens.push_state();
-    let result = parse_block(tokens, meta);
+    let result = parse_block(tokens, meta, scope, scopes);
+    match result {
+        Ok(value) => {
+            tokens.pop_state_no_revert();
+            return Ok(value);
+        },
+        Err(error) => {
+            if error.cmp_strength(&current_error) {
+                current_error_end = tokens.get_index();
+                current_error = Some(error);
+            }
+        }
+    }
+    tokens.pop_state();
+
+    tokens.push_state();
+    let result = parse_assignment(tokens, meta, scope, scopes);
     match result {
         Ok(value) => {
             tokens.pop_state_no_revert();
@@ -139,6 +256,22 @@ pub fn parse_value(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResu
         }
     }
     tokens.pop_state();
+    
+    tokens.push_state();
+    let result = parse_variable(tokens, meta, scope, scopes);
+    match result {
+        Ok(value) => {
+            tokens.pop_state_no_revert();
+            return Ok(value);
+        },
+        Err(error) => {
+            if error.cmp_strength(&current_error) {
+                current_error_end = tokens.get_index();
+                current_error = Some(error);
+            }
+        }
+    }
+    tokens.pop_state();
 
     if let Some(error) = current_error {
         tokens.index = current_error_end;
@@ -148,7 +281,7 @@ pub fn parse_value(tokens: &mut Needle<Token>, meta: &TextMetaData) -> ParseResu
     }
 } 
 
-pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData) 
+pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData, parent_scope: ScopeHandle, scopes: &mut ScopePool) 
         -> ParseResult<Box<SyntaxTreeNode>> {
     use tokenizer::KeywordType;
 
@@ -184,9 +317,10 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
     let mut contents: Vec<Box<SyntaxTreeNode>> = Vec::new();
     let mut _return = None;
     let mut errors = Vec::new();
+    let scope = parent_scope.create_subscope(scopes);
 
     loop {
-        let current_value = match parse_value(tokens, meta) {
+        let current_value = match parse_value(tokens, meta, scope, scopes) {
             Ok(value) => value,
             Err(err) => {
                 let start = err.get_start();
@@ -204,6 +338,7 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
 
                 if let Some(token) = tokens.peek() {
                     if token.is_keyword(KeywordType::BlockClose) {
+                        tokens.next();
                         break;
                     }
                 }
@@ -215,6 +350,7 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
                     strength: 2,
                     recover: Some(Box::new(BlockNode {
                         start: start,
+                        scope: scope,
                         contents: contents,
                         _return: _return
                     }))
@@ -228,6 +364,7 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
                     causes: errors,
                     recover: Some(Box::new(BlockNode {
                         start: start,
+                        scope: scope,
                         contents: contents,
                         _return: _return
                     }))
@@ -244,6 +381,7 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
                 recover: Some(
                     Box::new(BlockNode {
                         start: start,
+                        scope: scope,
                         contents: contents,
                         _return: _return
                     })
@@ -253,6 +391,7 @@ pub fn parse_block(tokens: &mut Needle<Token>, meta: &TextMetaData)
     }else{
         Ok(Box::new(BlockNode {
             start: start,
+            scope: scope,
             contents: contents,
             _return: _return
         }))
