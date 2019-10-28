@@ -2,6 +2,7 @@ mod tokenizer;
 mod lexer;
 mod tree_dump;
 mod needle;
+mod vm;
 use needle::{ Needle };
 pub use tree_dump::TreeDump;
 
@@ -41,6 +42,9 @@ fn run(code: &String) -> bool {
 }
 
 fn main() {
+    vm::test_vm();
+    return;
+
     let args: Vec<String> = std::env::args().collect();
     if let Some(data) = args.get(1) {
         match &data[..] {
